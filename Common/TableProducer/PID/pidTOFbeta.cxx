@@ -9,12 +9,20 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
+///
+/// \file   pidTOFbeta.cxx
+/// \author Nicolò Jacazio nicolo.jacazio@cern.ch
+/// \brief  Task to produce TOF beta tables
+///         QA histograms for the TOF PID can be produced by adding `--add-qa 1` to the workflow
+///
+
 // O2 includes
 #include "Framework/AnalysisTask.h"
 #include "Framework/HistogramRegistry.h"
 #include "Common/DataModel/TrackSelectionTables.h"
 #include "Common/Core/PID/PIDResponse.h"
 #include "Common/Core/PID/PIDTOF.h"
+#include "pidTOFBase.h"
 
 using namespace o2;
 using namespace o2::pid;
@@ -31,18 +39,40 @@ void customize(std::vector<o2::framework::ConfigParamSpec>& workflowOptions)
 #include "Framework/runDataProcessing.h"
 
 struct tofPidBeta {
-  using Trks = soa::Join<aod::Tracks, aod::TracksExtra, aod::TOFSignal>;
-  using Colls = aod::Collisions;
   Produces<aod::pidTOFbeta> tablePIDBeta;
-  tof::Beta<Trks::iterator> responseBeta;
   Configurable<float> expreso{"tof-expreso", 80, "Expected resolution for the computation of the expected beta"};
 
   void init(o2::framework::InitContext&)
   {
+    if (doprocessNoEvTime == true && doprocessEvTime == true) {
+      LOGF(fatal, "Cannot enable processNoEvTime and processEvTime at the same time. Please choose one.");
+    }
     responseBeta.mExpectedResolution = expreso.value;
+    responseBetaEvTime.mExpectedResolution = expreso.value;
   }
 
-  void process(Trks const& tracks, Colls const&)
+  using TrksEvTime = soa::Join<aod::Tracks, aod::TracksExtra, aod::TOFSignal, aod::TOFEvTime>;
+  tof::Beta<TrksEvTime::iterator> responseBetaEvTime;
+  template <o2::track::PID::ID pid>
+  using ResponseImplementationEvTime = o2::pid::tof::ExpTimes<TrksEvTime::iterator, pid>;
+  void processEvTime(TrksEvTime const& tracks, aod::Collisions const&)
+  {
+    tablePIDBeta.reserve(tracks.size());
+    for (auto const& trk : tracks) {
+      tablePIDBeta(responseBetaEvTime.GetBeta(trk, trk.tofEvTime()),
+                   responseBetaEvTime.GetExpectedSigma(trk),
+                   responseBetaEvTime.GetExpectedSignal<o2::track::PID::Electron>(trk),
+                   responseBetaEvTime.GetExpectedSigma(trk),
+                   responseBetaEvTime.GetSeparation<o2::track::PID::Electron>(trk));
+    }
+  }
+  PROCESS_SWITCH(tofPidBeta, processEvTime, "Produce TOF beta with TOF event time", false);
+
+  using Trks = soa::Join<aod::Tracks, aod::TracksExtra, aod::TOFSignal>;
+  tof::Beta<Trks::iterator> responseBeta;
+  template <o2::track::PID::ID pid>
+  using ResponseImplementation = o2::pid::tof::ExpTimes<Trks::iterator, pid>;
+  void processNoEvTime(Trks const& tracks, aod::Collisions const&)
   {
     tablePIDBeta.reserve(tracks.size());
     for (auto const& trk : tracks) {
@@ -53,10 +83,10 @@ struct tofPidBeta {
                    responseBeta.GetSeparation<o2::track::PID::Electron>(trk));
     }
   }
+  PROCESS_SWITCH(tofPidBeta, processNoEvTime, "Produce TOF beta without TOF event time, standard for Run 2", true);
 };
 
 struct tofPidBetaQa {
-
   static constexpr int Np = 9;
   static constexpr const char* pT[Np] = {"e", "#mu", "#pi", "K", "p", "d", "t", "^{3}He", "#alpha"};
   static constexpr std::string_view hexpected[Np] = {"expected/El", "expected/Mu", "expected/Pi",
@@ -97,6 +127,7 @@ struct tofPidBetaQa {
     // Event properties
     histos.add("event/tofsignal", "", HistType::kTH2F, {pAxis, tofAxis});
     histos.add("event/tofbeta", "", HistType::kTH2F, {pAxis, betaAxis});
+    histos.add("event/tofbetaEvTimeTOF", "", HistType::kTH2F, {pAxis, betaAxis});
     histos.add("event/eta", "", HistType::kTH1F, {etaAxis});
     histos.add("event/length", "", HistType::kTH1F, {lAxis});
     histos.add("event/pt", "", HistType::kTH1F, {ptAxis});
@@ -110,7 +141,7 @@ struct tofPidBetaQa {
     histos.fill(HIST(hexpected_diff[i]), t.p(), exp_diff);
     histos.fill(HIST(hnsigma[i]), t.p(), nsigma);
   }
-  void process(soa::Join<aod::Tracks, aod::TracksExtra, aod::pidTOFbeta, aod::TrackSelection, aod::TOFSignal> const& tracks,
+  void process(soa::Join<aod::Tracks, aod::TracksExtra, aod::pidTOFbeta, aod::TrackSelection, aod::TOFSignal, aod::pidEvTimeFlags> const& tracks,
                aod::Collisions const&)
   {
     for (auto const& track : tracks) {
@@ -120,6 +151,9 @@ struct tofPidBetaQa {
       }
       if (!track.isGlobalTrack()) {
         continue;
+      }
+      if (track.isEvTimeTOF()) {
+        histos.fill(HIST("event/tofbetaEvTimeTOF"), track.p(), track.beta());
       }
       histos.fill(HIST("event/tofbeta"), track.p(), track.beta());
       histos.fill(HIST("event/length"), track.length());

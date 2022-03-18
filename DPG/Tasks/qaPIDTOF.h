@@ -70,6 +70,7 @@ struct tofPidQa {
   Configurable<int> applyEvSel{"applyEvSel", 2, "Flag to apply rapidity cut: 0 -> no event selection, 1 -> Run 2 event selection, 2 -> Run 3 event selection"};
   Configurable<bool> applyTrackCut{"applyTrackCut", false, "Flag to apply standard track cuts"};
   Configurable<bool> applyRapidityCut{"applyRapidityCut", false, "Flag to apply rapidity cut"};
+  Configurable<bool> enableEvTimeSplitting{"enableEvTimeSplitting", false, "Flag to enable histograms splitting depending on the Event Time used"};
 
   template <o2::track::PID::ID id>
   void initPerParticle(const AxisSpec& pAxis, const AxisSpec& ptAxis)
@@ -96,13 +97,26 @@ struct tofPidQa {
 #undef particleCase
     }
 
+    auto addHistogram = [&](const auto& name, const auto& title, const auto& xAxis, const auto& yAxis) {
+      if (!enableEvTimeSplitting) {
+        histos.add(name.data(), title, kTH2F, {xAxis, yAxis});
+        return;
+      }
+      const AxisSpec nEvTimeTypeAxis{4, 0.5, 4.5, "Event Time used"};
+      auto histo = histos.add<TH3>(name.data(), title, kTH3F, {xAxis, yAxis, nEvTimeTypeAxis});
+      histo->GetZaxis()->SetBinLabel(1, "No Ev. Time");
+      histo->GetZaxis()->SetBinLabel(2, "TOF");
+      histo->GetZaxis()->SetBinLabel(3, "FT0");
+      histo->GetZaxis()->SetBinLabel(4, "FT0+TOF");
+    };
+
     // Exp signal
     const AxisSpec expAxis{1000, 0, 2e6, Form("t_{exp}(%s) (ps)", pT[id])};
     histos.add(hexpected[id].data(), "", kTH2F, {pAxis, expAxis});
 
     // Signal - Expected signal
     const AxisSpec deltaAxis{nBinsDelta, minDelta, maxDelta, Form("t-t_{ev}-t_{exp}(%s) (ps)", pT[id])};
-    histos.add(hexpected_diff[id].data(), "", kTH2F, {pAxis, deltaAxis});
+    addHistogram(hexpected_diff[id], Form("#Delta^{TOF}(%s)", pT[id]), pAxis, deltaAxis);
 
     // Exp Sigma
     const AxisSpec expSigmaAxis{nBinsExpSigma, minExpSigma, maxExpSigma, Form("Exp_{#sigma}^{TOF}(%s) (ps)", pT[id])};
@@ -111,10 +125,10 @@ struct tofPidQa {
     // NSigma
     const char* axisTitle = Form("N_{#sigma}^{TOF}(%s)", pT[id]);
     const AxisSpec nSigmaAxis{nBinsNSigma, minNSigma, maxNSigma, axisTitle};
-    histos.add(hnsigma[id].data(), axisTitle, kTH2F, {pAxis, nSigmaAxis});
-    histos.add(hnsigmapt[id].data(), axisTitle, kTH2F, {ptAxis, nSigmaAxis});
-    histos.add(hnsigmapospt[id].data(), axisTitle, kTH2F, {ptAxis, nSigmaAxis});
-    histos.add(hnsigmanegpt[id].data(), axisTitle, kTH2F, {ptAxis, nSigmaAxis});
+    addHistogram(hnsigma[id], axisTitle, pAxis, nSigmaAxis);
+    addHistogram(hnsigmapt[id], axisTitle, ptAxis, nSigmaAxis);
+    addHistogram(hnsigmapospt[id], axisTitle, ptAxis, nSigmaAxis);
+    addHistogram(hnsigmanegpt[id], axisTitle, ptAxis, nSigmaAxis);
   }
 
   void init(o2::framework::InitContext&)
@@ -289,6 +303,7 @@ struct tofPidQa {
       return;
     }
     const float collisionTime_ps = collision.collisionTime() * 1000.f;
+    int evTimeIndex = 1; // Index for the event time type
 
     for (auto t : tracks) {
       if (!isTrackSelected<false>(collision, t)) {
@@ -297,35 +312,59 @@ struct tofPidQa {
 
       if (applyRapidityCut) {
         if (abs(t.rapidity(PID::getMass(id))) > 0.5) {
-          return;
+          continue;
         }
       }
 
       const auto nsigma = o2::aod::pidutils::tofNSigma<id>(t);
-      histos.fill(HIST(hnsigma[id]), t.p(), nsigma);
-      histos.fill(HIST(hnsigmapt[id]), t.pt(), nsigma);
-      if (t.sign() > 0) {
-        histos.fill(HIST(hnsigmapospt[id]), t.pt(), nsigma);
+      if (!enableEvTimeSplitting) {
+        histos.fill(HIST(hnsigma[id]), t.p(), nsigma);
+        histos.fill(HIST(hnsigmapt[id]), t.pt(), nsigma);
+        if (t.sign() > 0) {
+          histos.fill(HIST(hnsigmapospt[id]), t.pt(), nsigma);
+        } else {
+          histos.fill(HIST(hnsigmanegpt[id]), t.pt(), nsigma);
+        }
       } else {
-        histos.fill(HIST(hnsigmanegpt[id]), t.pt(), nsigma);
+        evTimeIndex = 1;
+        if (t.isEvTimeTOF() && t.isEvTimeT0AC()) {
+          evTimeIndex = 4;
+        } else if (t.isEvTimeT0AC()) {
+          evTimeIndex = 3;
+        } else if (t.isEvTimeTOF()) {
+          evTimeIndex = 2;
+        }
+
+        histos.fill(HIST(hnsigma[id]), t.p(), nsigma, evTimeIndex);
+        histos.fill(HIST(hnsigmapt[id]), t.pt(), nsigma, evTimeIndex);
+        if (t.sign() > 0) {
+          histos.fill(HIST(hnsigmapospt[id]), t.pt(), nsigma, evTimeIndex);
+        } else {
+          histos.fill(HIST(hnsigmanegpt[id]), t.pt(), nsigma, evTimeIndex);
+        }
       }
       if constexpr (fillFullHistograms) {
         const float tof = t.tofSignal() - collisionTime_ps;
         const auto diff = o2::aod::pidutils::tofExpSignalDiff<id>(t);
         histos.fill(HIST(hexpected[id]), t.p(), tof - diff);
-        histos.fill(HIST(hexpected_diff[id]), t.p(), diff);
+        if (!enableEvTimeSplitting) {
+          histos.fill(HIST(hexpected_diff[id]), t.p(), diff);
+        } else {
+          histos.fill(HIST(hexpected_diff[id]), t.p(), diff, evTimeIndex);
+        }
         histos.fill(HIST(hexpsigma[id]), t.p(), o2::aod::pidutils::tofExpSigma<id>(t));
       }
     }
   }
 
   // QA of nsigma only tables
-#define makeProcessFunction(inputPid, particleId)                                                                                 \
-  void process##particleId(CollisionCandidate const& collision,                                                                   \
-                           soa::Join<aod::Tracks, aod::TracksExtra, aod::TOFSignal, aod::TrackSelection, inputPid> const& tracks) \
-  {                                                                                                                               \
-    processSingleParticle<PID::particleId, false>(collision, tracks);                                                             \
-  }                                                                                                                               \
+#define makeProcessFunction(inputPid, particleId)                                                  \
+  void process##particleId(CollisionCandidate const& collision,                                    \
+                           soa::Join<aod::Tracks, aod::TracksExtra, aod::TrackSelection,           \
+                                     aod::pidEvTimeFlags, aod::TOFSignal, inputPid> const& tracks) \
+  {                                                                                                \
+    processSingleParticle<PID::particleId, false>(collision, tracks);                              \
+  }                                                                                                \
   PROCESS_SWITCH(tofPidQa, process##particleId, Form("Process for the %s hypothesis for TOF NSigma QA", #particleId), false);
 
   makeProcessFunction(aod::pidTOFEl, Electron);
@@ -340,12 +379,13 @@ struct tofPidQa {
 #undef makeProcessFunction
 
 // QA of full tables
-#define makeProcessFunction(inputPid, particleId)                                                                                     \
-  void processFull##particleId(CollisionCandidate const& collision,                                                                   \
-                               soa::Join<aod::Tracks, aod::TracksExtra, aod::TOFSignal, aod::TrackSelection, inputPid> const& tracks) \
-  {                                                                                                                                   \
-    processSingleParticle<PID::particleId, true>(collision, tracks);                                                                  \
-  }                                                                                                                                   \
+#define makeProcessFunction(inputPid, particleId)                                                      \
+  void processFull##particleId(CollisionCandidate const& collision,                                    \
+                               soa::Join<aod::Tracks, aod::TracksExtra, aod::TrackSelection,           \
+                                         aod::pidEvTimeFlags, aod::TOFSignal, inputPid> const& tracks) \
+  {                                                                                                    \
+    processSingleParticle<PID::particleId, true>(collision, tracks);                                   \
+  }                                                                                                    \
   PROCESS_SWITCH(tofPidQa, processFull##particleId, Form("Process for the %s hypothesis for full TOF PID QA", #particleId), false);
 
   makeProcessFunction(aod::pidTOFFullEl, Electron);
