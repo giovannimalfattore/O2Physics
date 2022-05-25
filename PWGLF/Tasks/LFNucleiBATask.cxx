@@ -36,6 +36,7 @@ using namespace o2::framework;
 using namespace o2::framework::expressions;
 
 struct LFNucleiDeuteronTask {
+
   HistogramRegistry histos{"Histos", {}, OutputObjHandlingPolicy::AnalysisObject};
   HistogramRegistry spectraGen{"spectraGen", {}, OutputObjHandlingPolicy::AnalysisObject, false, true};
 
@@ -88,6 +89,7 @@ struct LFNucleiDeuteronTask {
     histos.add<TH2>("tracks/deuteron/h2TOFmass2DeuteronVsPt", "#Delta M^{2} (d) vs #it{p}_{T}; #Delta M^{2} (d); #it{p}_{T} (GeV/#it{c})", HistType::kTH2F, {{1000, -5., 5.}, {800, 0., 8.}});
     histos.add<TH2>("tracks/helium/h2TOFmass2HeliumVsPt", "#Delta M^{2} (He) vs #it{p}_{T}; #Delta M^{2} (He); #it{p}_{T} (GeV/#it{c})", HistType::kTH2F, {{1800, -9., 9.}, {800, 0., 8.}});
 
+
     // MC histograms
     AxisSpec ptAxis = {2000, 0.f, 20.f, "#it{p}_{T} (GeV/#it{c})"};
     spectraGen.add("histGenVetxZ", "PosZ generated events", HistType::kTH1F, {{2000, -20.f, 20.f, "Vertex Z (cm)"}});
@@ -98,6 +100,7 @@ struct LFNucleiDeuteronTask {
     spectraGen.add("histGenPtantiD", "generated particles", HistType::kTH1F, {ptAxis});
     spectraGen.add("histGenPtHe", "generated particles", HistType::kTH1F, {ptAxis});
     spectraGen.add("histGenPtantiHe", "generated particles", HistType::kTH1F, {ptAxis});
+
   }
 
   void processData(o2::aod::LfCandNucleusFullEvents::iterator const& event, o2::aod::LfCandNucleusFull const& tracks)
