@@ -382,7 +382,6 @@ struct LFNucleiBATask {
       debugHistos.add<TH1>("debug/tracks/h1VarPhi", "#phi; #phi; counts", HistType::kTH1F, {{63, 0.0, 6.3}});
       debugHistos.add<TH2>("debug/tracks/h2EtaVsPhi", "#eta vs #phi; #eta; #phi", HistType::kTH2F, {{200, -1.0, 1.0}, {63, 0.0, 6.3}});
       debugHistos.add<TH2>("debug/tracks/h2PionYvsPt", "#it{y} vs #it{p}_{T} (#pi)", HistType::kTH2F, {{200, -2., 2.}, {ptAxis}});
-
     }
 
     if (enablePtSpectra) {
